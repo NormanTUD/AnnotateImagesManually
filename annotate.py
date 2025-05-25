@@ -15,14 +15,13 @@ signal.signal(signal.SIGINT, signal_handler)
 
 
 class ImageTextEditor:
-    def __init__(self, root, folder, only_unannotated, max_width, max_height, exit_on_last, verbose,
+    def __init__(self, root, folder, only_unannotated, max_width, max_height, verbose,
                  start_index, light_mode):
         self.root = root
         self.folder = folder
         self.only_unannotated = only_unannotated
         self.max_width = max_width
         self.max_height = max_height
-        self.exit_on_last = exit_on_last
         self.verbose = verbose
         self.light_mode = light_mode
 
@@ -193,9 +192,8 @@ class ImageTextEditor:
         if self.index >= len(self.images):
             messagebox.showinfo("End", "No more images in folder.")
             self.log(f"Reached end of image list at index {self.index}.")
-            if self.exit_on_last:
-                self.log("Exiting program as exit_on_last is set.")
-                self.root.quit()
+            self.log("Exiting program.")
+            self.root.quit()
             return
 
         image_path = os.path.join(self.folder, self.images[self.index])
@@ -273,9 +271,8 @@ class ImageTextEditor:
             self.load_image()
         else:
             messagebox.showinfo("Info", "Already at last image.")
-            if self.exit_on_last:
-                self.log("Exiting program as exit_on_last is set.")
-                self.root.quit()
+            self.log("Exiting program.")
+            self.root.quit()
 
     def insert_prev_text(self):
         if self.prev_image_text:
@@ -297,7 +294,6 @@ def main():
     parser.add_argument("--only_unannotated", action="store_true", help="Only show images without .txt annotation files")
     parser.add_argument("--max_width", type=int, default=1920, help="Max image width for display")
     parser.add_argument("--max_height", type=int, default=1080, help="Max image height for display")
-    parser.add_argument("--exit_on_last", action="store_true", help="Exit program after last image")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("--start_index", type=int, help="Start at this image index (0-based)")
     parser.add_argument("--light_mode", action="store_true", help="Use light mode theme (default: dark mode)")
@@ -315,7 +311,7 @@ def main():
     poll()
 
     app = ImageTextEditor(root, args.folder, args.only_unannotated, args.max_width, args.max_height,
-                          args.exit_on_last, args.verbose, args.start_index, args.light_mode)
+                          args.verbose, args.start_index, args.light_mode)
     root.mainloop()
 
 if __name__ == "__main__":
