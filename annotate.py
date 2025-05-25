@@ -1,75 +1,76 @@
 import os
 import sys
-import signal
-from tkinter import Tk, Label, Text, END, messagebox
-from tkinter import N, S, E, W
+import argparse
+from tkinter import Tk, Label, Text, Button, END, messagebox
 from PIL import Image, ImageTk, ImageOps
 
-class ImageLabeler:
-    def __init__(self, folder):
+class ImageTextEditor:
+    def __init__(self, root, folder, only_unannotated, max_width, max_height, exit_on_last, verbose):
+        self.root = root
         self.folder = folder
-        self.images = [f for f in os.listdir(folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif'))]
-        self.images.sort()
+        self.only_unannotated = only_unannotated
+        self.max_width = max_width
+        self.max_height = max_height
+        self.exit_on_last = exit_on_last
+        self.verbose = verbose
+
+        self.images = self.load_images()
         self.index = 0
         self.previous_text = ""
 
-        if not self.images:
-            print("[DEBUG] No images found. Exiting.")
-            sys.exit(0)
+        self.root.title("Image Text Editor")
 
-        self.root = Tk()
-        self.root.title("Image Labeler")
+        self.image_label = Label(root)
+        self.image_label.pack()
 
-        self.image_label = Label(self.root)
-        self.image_label.grid(row=0, column=0, columnspan=3, sticky=N+S+E+W)
+        self.text_entry = Text(root, height=10)
+        self.text_entry.pack()
 
-        self.text_entry = Text(self.root, height=5, width=60, undo=True)
-        self.text_entry.grid(row=1, column=0, columnspan=3, sticky=N+S+E+W)
+        self.prev_button = Button(root, text="Previous", command=self.previous_image)
+        self.prev_button.pack(side="left")
 
-        self.button_save = Label(self.root, text="[Save]", fg="white", bg="green", cursor="hand2", padx=10, pady=5)
-        self.button_save.grid(row=2, column=0, sticky="ew", pady=5, padx=5)
-        self.button_save.bind("<Button-1>", lambda e: self.save_and_next())
+        self.next_button = Button(root, text="Next", command=self.next_image)
+        self.next_button.pack(side="right")
 
-        self.copy_btn = Label(self.root, text="[Copy previous text]", fg="white", bg="gray", cursor="hand2", padx=10, pady=5)
-        self.copy_btn.grid(row=2, column=1, sticky="ew", pady=5, padx=5)
-        self.copy_btn.bind("<Button-1>", lambda e: self.copy_previous())
-
-        self.info_label = Label(self.root, text="Enter text, Ctrl+S to save & next, Ctrl+C to exit", fg="blue")
-        self.info_label.grid(row=2, column=2, sticky="ew", pady=5, padx=5)
-
-        # Configure grid weights for resizing
-        self.root.grid_rowconfigure(0, weight=1)
-        self.root.grid_rowconfigure(1, weight=0)
-        self.root.grid_columnconfigure((0,1,2), weight=1)
-
-        # Bind Ctrl+S to save and next
-        self.text_entry.bind("<Control-s>", self.ctrl_s_save)
-        # Bind Ctrl+C to exit gracefully
-        self.text_entry.bind("<Control-c>", self.ctrl_c_exit)
-
-        # Also catch window close (X) event
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.save_button = Button(root, text="Save", command=self.save_text)
+        self.save_button.pack()
 
         self.load_image()
 
-        # Catch SIGINT (Ctrl+C in terminal)
-        signal.signal(signal.SIGINT, self.signal_handler)
+    def log(self, msg):
+        if self.verbose:
+            print(msg)
 
-        self.root.mainloop()
+    def load_images(self):
+        exts = [".jpg", ".jpeg", ".png", ".bmp", ".gif"]
+        files = [f for f in os.listdir(self.folder) if os.path.splitext(f)[1].lower() in exts]
+
+        if self.only_unannotated:
+            filtered = []
+            for f in files:
+                txt_file = os.path.splitext(os.path.join(self.folder, f))[0] + ".txt"
+                if not os.path.exists(txt_file):
+                    filtered.append(f)
+            self.log(f"[DEBUG] Only unannotated images selected, {len(filtered)} found.")
+            return sorted(filtered)
+
+        self.log(f"[DEBUG] Loaded {len(files)} images from folder {self.folder}")
+        return sorted(files)
 
     def load_image(self):
         if self.index >= len(self.images):
             messagebox.showinfo("End", "No more images in folder.")
-            print("[DEBUG] No more images in folder, exiting.")
-            self.root.quit()
+            self.log("[DEBUG] No more images in folder.")
+            if self.exit_on_last:
+                self.root.quit()
             return
 
         image_path = os.path.join(self.folder, self.images[self.index])
-        print(f"[DEBUG] Loading image {self.index+1}/{len(self.images)}: {image_path}")
+        self.log(f"[DEBUG] Loading image {self.index+1}/{len(self.images)}: {image_path}")
 
         img = Image.open(image_path)
         img = ImageOps.exif_transpose(img)
-        img.thumbnail((800, 600))
+        img.thumbnail((self.max_width, self.max_height))
 
         self.photo = ImageTk.PhotoImage(img)
         self.image_label.config(image=self.photo)
@@ -81,54 +82,73 @@ class ImageLabeler:
                 text = f.read()
             self.text_entry.insert(END, text)
             self.previous_text = text
-            print(f"[DEBUG] Loaded existing text from {txt_file}")
+            self.log(f"[DEBUG] Loaded existing text from {txt_file}")
         else:
             self.previous_text = ""
 
-        self.text_entry.focus_set()  # <-- Fokus auf das Textfeld setzen
+        self.text_entry.focus_set()
 
-        # reset autocomplete state (optional, da autocomplete entfernt)
-        self.autocomplete_active = False
-        self.matches = []
-        self.match_index = 0
+    def save_text(self):
+        if self.index >= len(self.images):
+            return
 
-    def save_and_next(self):
         image_path = os.path.join(self.folder, self.images[self.index])
         txt_file = os.path.splitext(image_path)[0] + ".txt"
-        text = self.text_entry.get("1.0", END).strip()
+        current_text = self.text_entry.get("1.0", END).strip()
+
+        if current_text == self.previous_text:
+            self.log("[DEBUG] Text unchanged, not saving.")
+            return
+
         with open(txt_file, "w", encoding="utf-8") as f:
-            f.write(text)
-        print(f"[DEBUG] Saved text to {txt_file}")
-        self.previous_text = text
-        self.index += 1
-        self.load_image()
+            f.write(current_text)
+        self.previous_text = current_text
+        self.log(f"[DEBUG] Saved text to {txt_file}")
 
-    def copy_previous(self):
-        if self.previous_text:
-            self.text_entry.delete("1.0", END)
-            self.text_entry.insert(END, self.previous_text)
-            print("[DEBUG] Copied previous text into input field.")
+    def next_image(self):
+        self.save_text()
+        if self.index < len(self.images) - 1:
+            self.index += 1
+            self.load_image()
         else:
-            print("[DEBUG] No previous text to copy.")
+            messagebox.showinfo("End", "No more images.")
+            self.log("[DEBUG] Reached last image.")
 
-    def ctrl_s_save(self, event):
-        print("[DEBUG] Ctrl+S pressed: saving and loading next image.")
-        self.save_and_next()
-        return "break"
+    def previous_image(self):
+        self.save_text()
+        if self.index > 0:
+            self.index -= 1
+            self.load_image()
+        else:
+            messagebox.showinfo("Start", "This is the first image.")
+            self.log("[DEBUG] At first image.")
 
-    def ctrl_c_exit(self, event):
-        print("[DEBUG] Ctrl+C pressed: exiting gracefully.")
-        self.root.quit()
-        return "break"
+def main():
+    parser = argparse.ArgumentParser(description="Simple Image Text Annotation Tool")
+    parser.add_argument("folder", default=os.getcwd(),
+                        help="Folder containing images (default: current directory)")
+    parser.add_argument("--only_unannotated", "-u", action="store_true",
+                        help="Only show images without existing .txt annotation files")
+    parser.add_argument("--max_width", type=int, default=800,
+                        help="Max width of images (default: 800)")
+    parser.add_argument("--max_height", type=int, default=600,
+                        help="Max height of images (default: 600)")
+    parser.add_argument("--exit_on_last", action="store_true",
+                        help="Exit the program when the last image is reached")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Show debug messages")
 
-    def on_close(self):
-        print("[DEBUG] Window closed by user.")
-        self.root.quit()
+    args = parser.parse_args()
 
-    def signal_handler(self, sig, frame):
-        print("\n[DEBUG] SIGINT received, exiting gracefully.")
-        self.root.quit()
+    root = Tk()
+    app = ImageTextEditor(root,
+                          folder=args.folder,
+                          only_unannotated=args.only_unannotated,
+                          max_width=args.max_width,
+                          max_height=args.max_height,
+                          exit_on_last=args.exit_on_last,
+                          verbose=args.verbose)
+    root.mainloop()
 
 if __name__ == "__main__":
-    folder_path = sys.argv[1] if len(sys.argv) > 1 else "."
-    ImageLabeler(folder_path)
+    main()
