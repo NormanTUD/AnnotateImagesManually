@@ -1,9 +1,8 @@
 import os
 import sys
-from tkinter import Tk, Label, Text, END, Listbox, Scrollbar, Frame, BOTH, VERTICAL
-from tkinter import messagebox
-from tkinter import NSEW, LEFT, RIGHT, Y
-from PIL import Image, ImageTk
+from tkinter import Tk, Label, Text, END, INSERT, messagebox
+from tkinter import N, S, E, W
+from PIL import Image, ImageTk, ImageOps
 
 class ImageLabeler:
     def __init__(self, folder):
@@ -12,64 +11,77 @@ class ImageLabeler:
         self.images.sort()
         self.index = 0
         self.previous_text = ""
-        self.suggestions = set()
-        
-        print(f"[DEBUG] Found {len(self.images)} images in '{folder}'")
-        self.load_all_suggestions()
-        
+
+        self.suggestions = self.load_suggestions_from_current_folder()
+
         if not self.images:
             print("[DEBUG] No images found. Exiting.")
             sys.exit(0)
-        
+
         self.root = Tk()
         self.root.title("Image Labeler")
-        
-        # Image display
+
         self.image_label = Label(self.root)
-        self.image_label.pack()
-        
-        # Frame für Text + Vorschläge
-        self.text_frame = Frame(self.root)
-        self.text_frame.pack(fill=BOTH, expand=True)
-        
-        # Textfeld
-        self.text_entry = Text(self.text_frame, height=5, width=60)
-        self.text_entry.pack(side=LEFT, fill=BOTH, expand=True)
+        self.image_label.grid(row=0, column=0, columnspan=3, sticky=N+S+E+W)
+
+        self.text_entry = Text(self.root, height=5, width=60, undo=True)
+        self.text_entry.grid(row=1, column=0, columnspan=3, sticky=N+S+E+W)
+        self.text_entry.bind("<Key>", self.on_keypress)
         self.text_entry.bind("<KeyRelease>", self.on_keyrelease)
-        self.text_entry.bind("<Down>", self.move_down)
-        self.text_entry.bind("<Up>", self.move_up)
-        self.text_entry.bind("<Return>", self.on_enter)
-        self.text_entry.bind("<Escape>", self.hide_suggestions)
-        
-        # Scrollbar für Listbox
-        self.scrollbar = Scrollbar(self.text_frame, orient=VERTICAL)
-        
-        # Listbox für Vorschläge
-        self.listbox = Listbox(self.text_frame, height=5, yscrollcommand=self.scrollbar.set)
-        self.listbox.pack_forget()
-        self.listbox.bind("<<ListboxSelect>>", self.on_listbox_select)
-        self.listbox.bind("<Return>", self.on_listbox_enter)
-        self.listbox.bind("<Escape>", self.hide_suggestions)
-        self.scrollbar.config(command=self.listbox.yview)
-        
-        # Buttons
-        self.save_btn = Label(self.root, text="Drücke Enter oder Klick 'Speichern' um zu speichern und zum nächsten Bild", fg="blue")
-        self.save_btn.pack(pady=2)
-        
-        self.button_save = Label(self.root, text="[Speichern]", fg="white", bg="green", cursor="hand2")
-        self.button_save.pack(pady=5)
+        self.text_entry.bind("<Tab>", self.on_tab)
+        self.text_entry.bind("<Up>", self.on_up)
+        self.text_entry.bind("<Down>", self.on_down)
+        self.text_entry.bind("<Return>", self.on_return)
+        self.text_entry.bind("<Control-s>", self.ctrl_s_save)
+
+        self.button_save = Label(self.root, text="[Save]", fg="white", bg="green", cursor="hand2", padx=10, pady=5)
+        self.button_save.grid(row=2, column=0, sticky="ew", pady=5, padx=5)
         self.button_save.bind("<Button-1>", lambda e: self.save_and_next())
-        
-        self.copy_btn = Label(self.root, text="[Vorherigen Text übernehmen]", fg="white", bg="gray", cursor="hand2")
-        self.copy_btn.pack(pady=5)
+
+        self.copy_btn = Label(self.root, text="[Copy previous text]", fg="white", bg="gray", cursor="hand2", padx=10, pady=5)
+        self.copy_btn.grid(row=2, column=1, sticky="ew", pady=5, padx=5)
         self.copy_btn.bind("<Button-1>", lambda e: self.copy_previous())
-        
+
+        self.info_label = Label(self.root, text="Enter text, use Tab/Up/Down to autocomplete, Ctrl+S to save & next", fg="blue")
+        self.info_label.grid(row=2, column=2, sticky="ew", pady=5, padx=5)
+
+        # Autocomplete state
+        self.matches = []
+        self.match_index = 0
+        self.autocomplete_active = False
+
+        # Configure grid weights for resizing
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_rowconfigure(1, weight=0)
+        self.root.grid_columnconfigure((0,1,2), weight=1)
+
         self.load_image()
-        
         self.root.mainloop()
-    
-    def load_all_suggestions(self):
-        print("[DEBUG] Lade alle bisherigen Texte für Vorschläge...")
+
+    def get_word_bounds(self):
+        # aktuelle Cursorposition (Index als string z.B. "1.7")
+        cursor_pos = self.text_entry.index("insert")
+
+        # Anfang der Zeile, um Rückwärts zu suchen
+        line_start = cursor_pos.split('.')[0] + ".0"
+
+        # Text von Zeilenanfang bis Cursor
+        text_before_cursor = self.text_entry.get(line_start, cursor_pos)
+
+        # Finde Anfang des aktuellen Wortes (letztes Leerzeichen o. Zeilenanfang)
+        import re
+        matches = list(re.finditer(r'\b\w+$', text_before_cursor))
+        if matches:
+            word_start_offset = matches[-1].start()
+        else:
+            word_start_offset = len(text_before_cursor)  # kein Wort gefunden, nur Cursor
+
+        # Berechne word_start als Text-Index
+        word_start = f"{line_start.split('.')[0]}.{word_start_offset}"
+        return word_start, cursor_pos
+
+    def load_suggestions_from_current_folder(self):
+        suggestions = set()
         for f in os.listdir(self.folder):
             if f.lower().endswith(".txt"):
                 path = os.path.join(self.folder, f)
@@ -77,179 +89,182 @@ class ImageLabeler:
                     with open(path, "r", encoding="utf-8") as file:
                         text = file.read()
                     words = set(word.lower() for word in text.split())
-                    self.suggestions.update(words)
+                    suggestions.update(words)
                 except Exception as e:
-                    print(f"[DEBUG] Fehler beim Laden von {f}: {e}")
-        print(f"[DEBUG] Insgesamt {len(self.suggestions)} Vorschlagswörter geladen.")
-    
+                    print(f"[DEBUG] Error loading {f}: {e}")
+        print(f"[DEBUG] Loaded {len(suggestions)} suggestions from current folder")
+        return suggestions
+
     def load_image(self):
         if self.index >= len(self.images):
-            print("[DEBUG] Keine Bilder mehr übrig.")
-            messagebox.showinfo("Ende", "Keine Bilder mehr im Ordner.")
+            messagebox.showinfo("End", "No more images in folder.")
+            print("[DEBUG] No more images in folder, exiting.")
             self.root.quit()
             return
-        
+
         image_path = os.path.join(self.folder, self.images[self.index])
-        print(f"[DEBUG] Lade Bild {self.index+1}/{len(self.images)}: {image_path}")
-        
-        # Bild laden und skalieren
+        print(f"[DEBUG] Loading image {self.index+1}/{len(self.images)}: {image_path}")
+
         img = Image.open(image_path)
+        # Korrekte Rotation aus EXIF
+        img = ImageOps.exif_transpose(img)
         img.thumbnail((800, 600))
-        
+
         self.photo = ImageTk.PhotoImage(img)
         self.image_label.config(image=self.photo)
-        
-        # Textfeld leeren und ggf. bestehenden Text laden
+
         self.text_entry.delete("1.0", END)
         txt_file = os.path.splitext(image_path)[0] + ".txt"
         if os.path.exists(txt_file):
             with open(txt_file, "r", encoding="utf-8") as f:
                 text = f.read()
-            print(f"[DEBUG] Lade existierenden Text aus {txt_file}")
             self.text_entry.insert(END, text)
             self.previous_text = text
+            print(f"[DEBUG] Loaded existing text from {txt_file}")
         else:
-            print("[DEBUG] Kein existierender Text gefunden.")
             self.previous_text = ""
-        
-        self.hide_suggestions()
-    
+
+        self.autocomplete_active = False
+        self.matches = []
+        self.match_index = 0
+
     def save_and_next(self):
         image_path = os.path.join(self.folder, self.images[self.index])
         txt_file = os.path.splitext(image_path)[0] + ".txt"
         text = self.text_entry.get("1.0", END).strip()
         with open(txt_file, "w", encoding="utf-8") as f:
             f.write(text)
-        print(f"[DEBUG] Text gespeichert in {txt_file}")
+        print(f"[DEBUG] Saved text to {txt_file}")
         self.previous_text = text
         self.index += 1
         self.load_image()
-    
+
     def copy_previous(self):
         if self.previous_text:
-            print("[DEBUG] Übernehme Text vom vorherigen Bild.")
             self.text_entry.delete("1.0", END)
             self.text_entry.insert(END, self.previous_text)
+            print("[DEBUG] Copied previous text into input field.")
         else:
-            print("[DEBUG] Kein vorheriger Text vorhanden.")
-    
-    # --- Vorschlagsfunktion ---
+            print("[DEBUG] No previous text to copy.")
+
+    def ctrl_s_save(self, event):
+        print("[DEBUG] Ctrl+S pressed: saving and loading next image.")
+        self.save_and_next()
+        return "break"
+
+    # --- Autocomplete ---
     def on_keyrelease(self, event):
-        if event.keysym in ("Up", "Down", "Return", "Escape"):
-            return  # für diese Tasten keine Vorschläge öffnen
-        
+        if event.keysym in ("Up", "Down", "Return", "Tab", "Control_L", "Control_R", "Shift_L", "Shift_R", "Alt_L", "Alt_R"):
+            return
+
         cursor_index = self.text_entry.index("insert")
         line, col = map(int, cursor_index.split("."))
-        current_line = self.text_entry.get(f"{line}.0", f"{line}.end")
-        prefix = ""
-        # Finde das Wort, das gerade getippt wird, am Cursor vorwärts (links)
+        line_text = self.text_entry.get(f"{line}.0", f"{line}.end")
+
+        # Suche Wortanfang links vom Cursor (nur alphabetische Zeichen)
         i = col - 1
-        while i >= 0 and current_line[i].isalpha():
+        while i >= 0 and line_text[i].isalpha():
             i -= 1
-        prefix = current_line[i+1:col].lower()
-        
+        start = i + 1
+        prefix = line_text[start:col].lower()
+
         if not prefix:
-            self.hide_suggestions()
+            self.autocomplete_active = False
+            self.matches = []
+            self.text_entry.tag_remove("autocomplete", "1.0", END)
             return
-        
-        print(f"[DEBUG] Suche Vorschläge für Prefix '{prefix}'")
-        matches = sorted(w for w in self.suggestions if w.startswith(prefix))
-        if not matches:
-            self.hide_suggestions()
+
+        self.matches = sorted(w for w in self.suggestions if w.startswith(prefix))
+        if not self.matches:
+            self.autocomplete_active = False
+            self.text_entry.tag_remove("autocomplete", "1.0", END)
             return
-        
-        self.show_suggestions(matches)
-    
-    def show_suggestions(self, suggestions):
-        # Listbox füllen und anzeigen
-        self.listbox.delete(0, END)
-        for w in suggestions:
-            self.listbox.insert(END, w)
-        if not self.listbox.winfo_ismapped():
-            self.listbox.pack(side=RIGHT, fill=Y)
-            self.scrollbar.pack(side=RIGHT, fill=Y)
-        self.listbox.selection_set(0)
-    
-    def hide_suggestions(self, event=None):
-        self.listbox.pack_forget()
-        self.scrollbar.pack_forget()
-    
-    def move_down(self, event):
-        if self.listbox.winfo_ismapped():
-            current = self.listbox.curselection()
-            if not current:
-                idx = 0
-            else:
-                idx = current[0]
-                if idx < self.listbox.size() - 1:
-                    idx += 1
-            self.listbox.selection_clear(0, END)
-            self.listbox.selection_set(idx)
-            self.listbox.activate(idx)
+
+        self.match_index = 0
+        self.autocomplete_active = True
+        self._autocomplete_replace(start, col)
+
+    def _autocomplete_replace(self, start_index, end_index):
+        # Nimm den Vorschlag aus deinem state (z.B. self.current_suggestion)
+        suggestion = self.current_suggestion if hasattr(self, "current_suggestion") else ""
+        if not suggestion:
+            return
+
+        # Ersetze den Text zwischen start_index und end_index mit dem Vorschlag
+        self.text_entry.delete(start_index, end_index)
+        self.text_entry.insert(start_index, suggestion)
+
+        # Entferne Highlight
+        self.text_entry.tag_remove("autocomplete", "1.0", "end")
+        self.autocomplete_active = False
+
+        # Setze Cursor ans Ende des eingefügten Vorschlags
+        new_pos = self.text_entry.index(f"{start_index}+{len(suggestion)}c")
+        self.text_entry.mark_set("insert", new_pos)
+
+    def on_tab(self, event):
+        if not self.autocomplete_active or not self.matches:
+            return
+        self.match_index = (self.match_index + 1) % len(self.matches)
+        cursor_index = self.text_entry.index("insert")
+        line, col = map(int, cursor_index.split("."))
+        line_text = self.text_entry.get(f"{line}.0", f"{line}.end")
+        i = col - 1
+        while i >= 0 and line_text[i].isalpha():
+            i -= 1
+        start = i + 1
+        self._autocomplete_replace(start, col)
+        return "break"
+
+    def on_up(self, event):
+        if not self.autocomplete_active or not self.matches:
+            return
+        self.match_index = (self.match_index - 1) % len(self.matches)
+        cursor_index = self.text_entry.index("insert")
+        line, col = map(int, cursor_index.split("."))
+        line_text = self.text_entry.get(f"{line}.0", f"{line}.end")
+        i = col - 1
+        while i >= 0 and line_text[i].isalpha():
+            i -= 1
+        start = i + 1
+        self._autocomplete_replace(start, col)
+        return "break"
+
+    def on_keypress(self, event):
+        if self.autocomplete_active:
+            if event.keysym in ("Tab", "Right"):
+                word_start, cursor_pos = self.get_word_bounds()
+                self._autocomplete_replace(word_start, cursor_pos)
+                return "break"
+            elif len(event.char) == 1 and event.char.isprintable():
+                self.text_entry.tag_remove("autocomplete", "1.0", "end")
+                self.autocomplete_active = False
+        if event.keysym == "s" and (event.state & 0x4):  # Ctrl+S
+            self._save_and_next()
             return "break"
-    
-    def move_up(self, event):
-        if self.listbox.winfo_ismapped():
-            current = self.listbox.curselection()
-            if not current:
-                idx = 0
-            else:
-                idx = current[0]
-                if idx > 0:
-                    idx -= 1
-            self.listbox.selection_clear(0, END)
-            self.listbox.selection_set(idx)
-            self.listbox.activate(idx)
-            return "break"
-    
-    def on_enter(self, event):
-        if self.listbox.winfo_ismapped():
-            self.insert_suggestion()
-            return "break"  # Enter nicht als neue Zeile einfügen
+
+    def on_down(self, event):
+        return self.on_tab(event)
+
+    def on_return(self, event):
+        if self.autocomplete_active:
+            self.text_entry.tag_remove("autocomplete", "1.0", END)
+            # Cursor ans Ende des Wortes setzen (nach dem Vorschlag)
+            cursor_index = self.text_entry.index("insert")
+            line, col = map(int, cursor_index.split("."))
+            line_text = self.text_entry.get(f"{line}.0", f"{line}.end")
+            i = col - 1
+            while i < len(line_text) and line_text[i].isalpha():
+                i += 1
+            new_pos = f"{line}.{i}"
+            self.text_entry.mark_set("insert", new_pos)
+            self.autocomplete_active = False
+            return "break"  # Verhindert Zeilenumbruch
         else:
-            # Enter speichert und geht weiter
+            # Wenn kein Autocomplete aktiv, dann Save + next beim Enter
             self.save_and_next()
             return "break"
-    
-    def on_listbox_enter(self, event):
-        self.insert_suggestion()
-        return "break"
-    
-    def on_listbox_select(self, event):
-        # Kein automatisches einfügen beim Mausklick - warte auf Enter
-        pass
-    
-    def insert_suggestion(self):
-        sel = self.listbox.curselection()
-        if not sel:
-            return
-        word = self.listbox.get(sel[0])
-        
-        # Wort unter Cursor ersetzen
-        cursor_index = self.text_entry.index("insert")
-        line, col = map(int, cursor_index.split("."))
-        current_line = self.text_entry.get(f"{line}.0", f"{line}.end")
-        
-        i = col - 1
-        while i >= 0 and current_line[i].isalpha():
-            i -= 1
-        start = i+1
-        
-        # Ersetze Wort
-        self.text_entry.delete(f"{line}.{start}", cursor_index)
-        self.text_entry.insert(f"{line}.{start}", word)
-        
-        # Cursor ans Ende des Wortes setzen
-        self.text_entry.mark_set("insert", f"{line}.{start + len(word)}")
-        self.hide_suggestions()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 image_labeler.py /path/to/image_folder")
-        sys.exit(1)
-    folder = sys.argv[1]
-    if not os.path.isdir(folder):
-        print(f"Error: '{folder}' is not a valid directory.")
-        sys.exit(1)
-    
-    ImageLabeler(folder)
+    folder_path = sys.argv[1] if len(sys.argv) > 1 else "."
+    ImageLabeler(folder_path)
