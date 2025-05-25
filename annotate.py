@@ -85,6 +85,13 @@ class ImageLabeler:
         else:
             self.previous_text = ""
 
+        self.text_entry.focus_set()  # <-- Fokus auf das Textfeld setzen
+
+        # reset autocomplete state (optional, da autocomplete entfernt)
+        self.autocomplete_active = False
+        self.matches = []
+        self.match_index = 0
+
     def save_and_next(self):
         image_path = os.path.join(self.folder, self.images[self.index])
         txt_file = os.path.splitext(image_path)[0] + ".txt"
