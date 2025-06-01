@@ -62,7 +62,7 @@ class ImageTextEditor:
 
     def load_images(self):
         exts = [".jpg", ".jpeg", ".png", ".bmp", ".gif"]
-        files = [f for f in os.listdir(self.folder) if os.path.splitext(f)[1].lower() in exts]
+        files = [os.path.relpath(os.path.join(dp, f), self.folder) for dp, _, fs in os.walk(self.folder) for f in fs if os.path.splitext(f)[1].lower() in exts]
 
         if self.only_unannotated:
             filtered = []
